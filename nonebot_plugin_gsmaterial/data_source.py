@@ -19,7 +19,7 @@ from .material_draw import draw_calculator, draw_materials
 
 
 async def sub_helper(
-    mode: Literal["r", "ag", "ap", "dg", "dp"] = "r", id: Union[str, int] = ""
+    mode: Literal["r", "ag", "ap", "dg", "dp"] = "r", id: Union[str, str] = ""
 ) -> Union[Dict, str]:
     """订阅配置助手，支持读取 ``r(ead)`` 配置、添加 ``a(dd)`` 群组 ``g(roup)`` 订阅、添加私聊 ``p(rivate)`` 订阅、删除 ``d(elete)`` 群组订阅、删除私聊订阅"""
 
@@ -34,14 +34,14 @@ async def sub_helper(
     write_key = {"g": "群组", "p": "私聊"}[mode[1]]
     if mode[0] == "a":
         # 添加群组订阅或私聊订阅
-        if int(id) in list(sub_cfg[write_key]):
+        if str(id) in list(sub_cfg[write_key]):
             return f"已经添加过当前{write_key}的原神每日材料订阅辣！"
-        sub_cfg[write_key].append(int(id))
+        sub_cfg[write_key].append(str(id))
     else:
         # 删除群组订阅或私聊订阅
-        if int(id) not in list(sub_cfg[write_key]):
+        if str(id) not in list(sub_cfg[write_key]):
             return f"还没有添加过当前{write_key}的原神每日材料订阅哦.."
-        sub_cfg[write_key].remove(int(id))
+        sub_cfg[write_key].remove(str(id))
 
     # 更新写入
     cfg_file.write_text(
@@ -590,14 +590,16 @@ async def generate_daily_msg(
     # 时间判断
     weekday = weekday or get_weekday(delta)
     if weekday == 7:
-        return "今天所有天赋培养、武器突破材料都可以获取哦~"
+        return "【每日材料推送】今天所有天赋培养、武器突破材料都可以获取哦~"
     day = weekday % 3 or 3
 
     # 存在图片缓存且非更新任务时使用缓存
     cache_pic = CONFIG_DIR / "cache" / f"daily.{day}.{material}.jpg"
     if material != "update" and cache_pic.exists():
+        with open(cache_pic, mode="rb") as f:
+            resource_temp_path = f.read()
         logger.info(f"使用缓存的原神材料图片 {cache_pic.name}")
-        return cache_pic
+        return resource_temp_path
 
     # 根据每日材料配置重新生成图片
     config = json.loads((CONFIG_DIR / "config.json").read_text(encoding="UTF-8"))
@@ -617,8 +619,10 @@ async def generate_weekly_msg(boss: str) -> Union[Path, str]:
     # 存在图片缓存且非更新任务时使用缓存
     cache_pic = CONFIG_DIR / f"cache/weekly.{boss}.jpg"
     if cache_pic.exists():
+        with open(cache_pic, mode="rb") as f:
+            resource_temp_path = f.read()
         logger.info(f"使用缓存的原神材料图片 {cache_pic.name}")
-        return cache_pic
+        return resource_temp_path
 
     # 根据每日材料配置重新生成图片
     config = json.loads((CONFIG_DIR / "config.json").read_text(encoding="UTF-8"))

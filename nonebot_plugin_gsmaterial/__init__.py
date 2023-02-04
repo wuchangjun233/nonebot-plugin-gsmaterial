@@ -1,13 +1,17 @@
+import base64
+
 from asyncio import sleep as async_sleep
 from random import randint
 from typing import Dict
+from pathlib import Path
 
-from nonebot import get_bot, get_driver, require
-from nonebot.adapters.onebot.v11 import Bot
-from nonebot.adapters.onebot.v11.event import GroupMessageEvent, MessageEvent
-from nonebot.adapters.onebot.v11.message import MessageSegment
+from nonebot import get_bot, get_driver ,require
+from nonebot.adapters.ntchat import Bot
+from nonebot.adapters.ntchat.event import MessageEvent
+from nonebot.adapters.ntchat.message import MessageSegment,Message
 from nonebot.plugin import on_command
-from nonebot.typing import T_State
+from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
 
 from .config import SCHED_HOUR, SCHED_MINUTE, WEEKLY_BOSS
 from .data_source import (
@@ -18,33 +22,32 @@ from .data_source import (
     update_config,
 )
 
-require("nonebot_plugin_apscheduler")
-from nonebot_plugin_apscheduler import scheduler  # noqa: E402
+require('nonebot_plugin_apscheduler')
+from nonebot_plugin_apscheduler import scheduler
 
-mt_daily_matcher = on_command("材料", priority=13)
-mt_weekly_matcher = on_command("周本", priority=13)
-mt_calc_matcher = on_command("原神计算", priority=13)
+mt_daily_matcher = on_command("材料图", priority=13, block=True)
+mt_weekly_matcher = on_command("周本", priority=13, block=True)
+mt_calc_matcher = on_command("原神计算", priority=13, block=True)
+mt_calc_help_matcher = on_command("原神计算帮助", priority=13, block=True)
+
 driver = get_driver()
 driver.on_bot_connect(update_config)
 
 
 @mt_daily_matcher.handle()
-async def daily_material(bot: Bot, event: MessageEvent, state: T_State):
+async def daily_material(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     # 获取不包含触发关键词的消息文本
-    arg = str(state["_prefix"]["command_arg"])
-    qq = str(event.get_user_id())
-
+    qq = event.from_wxid
+    arg = str(args)
     # 单独响应订阅指令
     if arg.startswith("订阅"):
         is_delete = "删除" in arg
-        is_group = isinstance(event, GroupMessageEvent)
-        action = f"{'d' if is_delete else 'a'}{'g' if is_group else 'p'}"
-        action_id = event.group_id if is_group else qq
-        if (
-            is_group
-            and qq not in bot.config.superusers
-            and event.sender.role not in ["admin", "owner"]
-        ):
+        action = f"{'d' if is_delete else 'a'}{'g' if event.room_wxid else 'p'}"
+        if event.room_wxid == "":
+            action_id = qq
+        else:
+            action_id = event.room_wxid
+        if event.room_wxid != "" and qq not in bot.config.superusers:
             await mt_daily_matcher.finish(
                 f"你没有权限{'删除' if is_delete else '启用'}此群原神每日材料订阅！"
             )
@@ -83,9 +86,10 @@ async def daily_material(bot: Bot, event: MessageEvent, state: T_State):
 
 
 @mt_weekly_matcher.handle()
-async def weekly_material(bot: Bot, event: MessageEvent, state: T_State):
+async def weekly_material(bot: Bot, event: MessageEvent,args: Message = CommandArg()):
     # 获取不包含触发关键词的消息文本
-    arg, target = str(state["_prefix"]["command_arg"]), ""
+    arg = str(args)
+    target = ""
     # 处理输入
     for boss_alias in WEEKLY_BOSS:
         if arg in boss_alias:
@@ -105,13 +109,21 @@ async def weekly_material(bot: Bot, event: MessageEvent, state: T_State):
 
 
 @mt_calc_matcher.handle()
-async def calc_material(bot: Bot, event: MessageEvent, state: T_State):
-    arg = str(state["_prefix"]["command_arg"])
+async def calc_material(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    arg = str(args)
     msg = await generate_calc_msg(arg)
     await mt_weekly_matcher.finish(
         MessageSegment.text(msg) if isinstance(msg, str) else MessageSegment.image(msg)
     )
 
+@mt_calc_help_matcher.handle()
+async def send_calc_help_pic(matcher: Matcher):
+    HELP_IMG = Path(__file__).parent / 'calc_help.png'
+    if HELP_IMG.exists():
+        with open(HELP_IMG, 'rb') as f:
+            await matcher.finish(MessageSegment.image(f.read()))
+    else:
+        await matcher.finish('帮助图不存在!')
 
 @scheduler.scheduled_job("cron", hour=int(SCHED_HOUR), minute=int(SCHED_MINUTE))
 async def daily_push():
@@ -121,13 +133,30 @@ async def daily_push():
     assert isinstance(cfg, Dict)
     # 更新每日材料图片
     msg = await generate_daily_msg("update")
-    message = (
-        MessageSegment.text(msg) if isinstance(msg, str) else MessageSegment.image(msg)
-    )
     # 推送
+    if isinstance(msg, str):
+        apis = 'send_text'
+        data = {"content": msg}
+    else:
+        apis = 'send_image'
+        with open (msg,'rb') as f:
+            b64img = base64.b64encode(f.read())
+        data = {"file_path": "base64://" + b64img.decode()}
+
+
     for group in cfg.get("群组", []):
-        await bot.send_group_msg(group_id=group, message=message)
+        await bot.call_api(
+            api= apis, 
+            to_wxid=f'{str(group)}', 
+            **data
+        )
         await async_sleep(randint(5, 10))
+
     for private in cfg.get("私聊", []):
-        await bot.send_private_msg(user_id=private, message=message)
+        await bot.call_api(
+            api= apis, 
+            to_wxid=f'{str(private)}', 
+            **data
+        )
         await async_sleep(randint(5, 10))
+        
